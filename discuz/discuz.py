@@ -34,7 +34,8 @@ args = parser.parse_args()
 def get_ip(url=None, proxies=None):
     if url is None:
         try:
-            url = 'https://10000.gd.cn/getClientIP.php?id={}'.format(random())
+            #url = 'https://10000.gd.cn/getClientIP.php?id={}'.format(random())
+            url = 'https://api.ipify.org'
             myip = requests.get(url, proxies=proxies).text
             return myip
         except Exception:
