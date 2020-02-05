@@ -286,9 +286,9 @@ class Checkin(object):
             proxies_used.append(proxy)
 
             proxies = {
-                'http': proxy,
-                'https': proxy
+                'http': 'http://{}'.format(proxy)
             }
+            proxies['https'] = proxies['http']
             promotion_url = '{}/?fromuid={}'.format(self.forumurl, self.user_id)
             try:
                 res = requests.get(promotion_url, proxies=proxies, headers={'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36'}, timeout=10)
