@@ -304,9 +304,11 @@ class Checkin(object):
                     if credit_not_changed > 3:
                         warn('credit not changed by doing promotion, now stop.')
                         break
+            except requests.exceptions.RequestException:
+                warn('promotion action failed with requests error.')
 
             except Exception:
-                warn('promotion action failed.', exc_info=True)
+                warn('promotion action failed', exc_info=True)
 
             time.sleep(randint(1, 5))
 
