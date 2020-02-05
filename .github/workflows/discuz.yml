@@ -27,7 +27,7 @@ jobs:
         discuz_username_1: ${{ secrets.discuz_username_1 }}
         discuz_password_1: ${{ secrets.discuz_password_1 }}
         discuz_cookie_1: ${{ secrets.discuz_cookie_1 }}
-        discuz_forumurl_1: ${{ secrets.discuz_password_1 }} 
+        discuz_forumurl_1: ${{ secrets.discuz_forumurl_1 }} 
         PROXY_POOL_HOST: ${{ secrets.PROXY_POOL_HOST }}
         PROXY_POOL_CHECK_URL: ${{ secrets.PROXY_POOL_CHECK_URL }} 
       run: |
