@@ -1,0 +1,34 @@
+name: Discuz
+
+on: 
+  push:
+    branches:
+    - master
+  schedule:
+  - cron: 10 9 * * *
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: Set up Python3.7
+      uses: actions/setup-python@v1
+      with:
+        python-version: '3.7'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    - name: Run hostloc checkin
+      env:
+        discuz_username_1: ${{ secrets.discuz_username_1 }}
+        discuz_password_1: ${{ secrets.discuz_password_1 }}
+        discuz_cookie_1: ${{ secrets.discuz_cookie_1 }}
+        discuz_forumurl_1: ${{ secrets.discuz_password_1 }} 
+        PROXY_POOL_HOST: ${{ secrets.PROXY_POOL_HOST }}
+        PROXY_POOL_CHECK_URL: ${{ secrets.PROXY_POOL_CHECK_URL }} 
+      run: |
+        python discuz/discuz.py
