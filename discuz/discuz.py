@@ -12,6 +12,7 @@ import textwrap
 import time
 from random import random, randint
 from urllib.parse import quote, urlparse
+import uncurl
 
 if __name__ == '__main__':
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
@@ -83,7 +84,8 @@ for key, value in envs.items():
 
         # group of regex match from user info.
         # 3: 金钱, 5: 威望, 6: 积分
-        promotion_credit_field_index = os.getenv('discuz_promotion_credit_field_index_' + env_id, 6)
+        promotion_credit_field_index = int(os.getenv('discuz_promotion_credit_field_index_' + env_id, 6))
+        curl_actions = os.getenv('discuz_curl_actions_' + env_id)
         forumurl = os.getenv('discuz_forumurl_' + env_id)
 
         proxies = {}
@@ -107,6 +109,7 @@ for key, value in envs.items():
                 'password': password,
                 'cookie': cookie,
                 'promotion_credit_field_index': promotion_credit_field_index,
+                'curl_actions': curl_actions,
                 'forumurl': forumurl
             }
             if proxies:
@@ -123,6 +126,7 @@ class Checkin(object):
         self.password = account.get('password')
         self.cookie = account.get('cookie')
         self.promotion_credit_field_index = account.get('promotion_credit_field_index')
+        self.curl_actions = account.get('curl_actions')
         self.forumurl = account.get('forumurl')
         self.proxies = account.get('proxies')
 
@@ -141,6 +145,7 @@ class Checkin(object):
 
         self.discuz_promotion_with_proxy()
         time.sleep(randint(1, 5))
+        self.do_curl_actions()
 
     def discuz_visit_user_space(self):
         _current = self.discuz_user_info_pasered()
@@ -318,6 +323,27 @@ class Checkin(object):
                 warn('promotion action failed', exc_info=True)
 
             time.sleep(randint(1, 5))
+
+    def do_curl_actions(self):
+        if self.curl_actions:
+            curl_actions = self.curl_actions.split('\n')
+            curl_actions = list(filter(None, curl_actions))
+            for i in range(len(curl_actions)):
+                action = curl_actions[i]
+                try:
+                    context = uncurl.parse_context(action)
+                    req = requests.Request(context.method, context.url, data=context.data, headers=context.headers)
+                    prepped = self.sess.prepare_request(req)
+                    resp = self.sess.send(prepped)
+                    info('curl action ({}) was finished, status code: {}.'.format(i + 1, resp.status_code))
+                except Exception as e:
+                    warn('curl action ({}) was not finished as expected.'.format(i + 1), exc_info=True)
+
+            info('curl actions were finished.')
+            return True
+
+        info('no curl actions found, ignore.')
+        return False
 
     def checkin_workds_retry(self):
         while True:

@@ -1,3 +1,4 @@
 requests[socks]
 # pyquery
 colorlog
+uncurl
