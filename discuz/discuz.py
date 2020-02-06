@@ -80,6 +80,10 @@ for key, value in envs.items():
         env_id = key.split('discuz_username_')[-1]
         password = os.getenv('discuz_password_' + env_id)
         cookie = os.getenv('discuz_cookie_' + env_id)
+
+        # group of regex match from user info.
+        # 3: 金钱, 5: 威望, 6: 积分
+        promotion_credit_field_index = os.getenv('discuz_promotion_credit_field_index_' + env_id, 6)
         forumurl = os.getenv('discuz_forumurl_' + env_id)
 
         proxies = {}
@@ -102,6 +106,7 @@ for key, value in envs.items():
                 'username': value,
                 'password': password,
                 'cookie': cookie,
+                'promotion_credit_field_index': promotion_credit_field_index,
                 'forumurl': forumurl
             }
             if proxies:
@@ -117,6 +122,7 @@ class Checkin(object):
         self.username = account.get('username')
         self.password = account.get('password')
         self.cookie = account.get('cookie')
+        self.promotion_credit_field_index = account.get('promotion_credit_field_index')
         self.forumurl = account.get('forumurl')
         self.proxies = account.get('proxies')
 
@@ -296,7 +302,8 @@ class Checkin(object):
                 self.discuz_print_user_info(_current, '(之前)')
                 self.discuz_print_user_info(_new, '(现在)')
                 info('promotion action success.')
-                if _current.group(1) != _new.group(1):
+                if _current.group(self.promotion_credit_field_index) != _new.group(self.promotion_credit_field_index):
+                    credit_not_changed = 0
                     times -= 1
 
                 else:
