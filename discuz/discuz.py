@@ -12,6 +12,7 @@ import textwrap
 import time
 from random import random, randint
 from urllib.parse import quote, urlparse
+#from http.cookies import SimpleCookie
 import uncurl
 
 if __name__ == '__main__':
@@ -19,6 +20,7 @@ if __name__ == '__main__':
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
 
 from applib.proxy_pool_lib import Proxy
+from applib.net_lib import NetManager
 from applib.log_lib import app_log
 info, debug, warn, error = app_log.info, app_log.debug, app_log.warn, app_log.error
 
@@ -134,7 +136,7 @@ class Checkin(object):
         self.user_id = 0
         self.retry = retry
         self.strage = strage
-        self.sess = requests.session()
+        self.net = NetManager()
 
         info('processing works for user {} of {}'.format(self.username, self.forumurl))
 
@@ -158,14 +160,18 @@ class Checkin(object):
             space_uid = randint(1, 35550)
             if space_uid in visited_space_uids:
                 continue
-            space_text = self.sess.get('{forumurl}/?{uid}'.format(forumurl = self.forumurl, uid = space_uid), proxies=proxies).text
-            visited_space_uids.append(space_uid)
-            time.sleep(randint(1, 5))
-            if '抱歉，您指定的用户空间不存在' in space_text:
-                debug('访问UID: %s，不存在', space_uid)
-                continue
-            debug('访问UID: %s, 成功', space_uid)
-            _visit += 1
+
+            _, data, ok = self.net.getData('{forumurl}/?{uid}'.format(forumurl = self.forumurl, uid = space_uid), timeout=10, proxies=proxies, my_retry=3, my_fmt='str')
+            if ok:
+                space_text = data
+                visited_space_uids.append(space_uid)
+                time.sleep(randint(1, 5))
+                if '抱歉，您指定的用户空间不存在' in space_text:
+                    debug('访问UID: %s，不存在', space_uid)
+                    continue
+                debug('访问UID: %s, 成功', space_uid)
+                _visit += 1
+
         _new = self.discuz_user_info_pasered()
         self.discuz_print_user_info(_current, '(之前)')
         self.discuz_print_user_info(_new, '(现在)')
@@ -192,7 +198,7 @@ class Checkin(object):
             'referer': '{}/member.php'.format(self.forumurl),
             'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7,zh-TW;q=0.6'
         }
-        self.sess.headers.update(headers)
+        self.net.sess.headers.update(headers)
         if self.strage == 'tencent':
             pass
         else:
@@ -202,25 +208,25 @@ class Checkin(object):
             login_url = '{}/member.php?mod=logging&action=login&loginsubmit=yes&infloat=yes&lssubmit=yes&inajax=1'.format(self.forumurl)
 
             payload = "fastloginfield=email&username={}&password={}&quickforward=yes&handlekey=ls".format(quote(self.username), self.password)
-            login_post = self.sess.request('POST', login_url, data=payload, proxies=proxies, cookies=cookies)
+            _, data, ok = self.net.getData(login_url, method='POST', data=payload, cookies=cookies, timeout=10, proxies=proxies, my_retry=3, my_fmt='str')
+            if ok:
+                _aes = re.findall("toNumbers\(\"(.*?)\"\)?", data, flags=re.S)
+                if _aes:
+                    info("发现防ddos")
+                    # aes_url = 'https://donjs.herokuapp.com/aes/{a}/{b}/{c}'.format(a=_aes[0], b=_aes[1], c=_aes[2])
+                    # debug('aes_url: %s', aes_url)
+                    # L7DFW = requests.get(aes_url, proxies=proxies).text
+                    L7DFW = decodeAesCookie(
+                        toNumbers(_aes[2]),
+                        toNumbers(_aes[0]),
+                        toNumbers(_aes[1])
+                    )
+                    debug('L7DFW: %s', L7DFW)
+                    cookies['L7DFW'] = L7DFW
+                    time.sleep(1)
+                    self.net.getData(login_url, method='POST', json={'username': self.username, 'password': self.password}, cookies=cookies, timeout=10, proxies=proxies, my_retry=3, my_fmt='str')
 
-            _aes = re.findall("toNumbers\(\"(.*?)\"\)?", login_post.text, flags=re.S)
-            if _aes:
-                info("发现防ddos")
-                # aes_url = 'https://donjs.herokuapp.com/aes/{a}/{b}/{c}'.format(a=_aes[0], b=_aes[1], c=_aes[2])
-                # debug('aes_url: %s', aes_url)
-                # L7DFW = requests.get(aes_url, proxies=proxies).text
-                L7DFW = decodeAesCookie(
-                    toNumbers(_aes[2]),
-                    toNumbers(_aes[0]),
-                    toNumbers(_aes[1])
-                )
-                debug('L7DFW: %s', L7DFW)
-                cookies['L7DFW'] = L7DFW
-                time.sleep(1)
-                login_post_with_cookies = self.sess.post(login_url, {'username': self.username, 'password': self.password}, proxies=proxies, cookies=cookies)
-
-            #time.sleep(randint(1, 5))
+                #time.sleep(randint(1, 5))
 
         else:
             self._addCookieToSession()
@@ -249,12 +255,17 @@ class Checkin(object):
 
     def discuz_get_user_info(self):
         try:
-            user_info = self.sess.get('{}/home.php?mod=spacecp&ac=credit'.format(self.forumurl), proxies=proxies).text
-            self.user_info = user_info
-            self.discuz_get_user_id()
+            _, data, ok = self.net.getData('{}/home.php?mod=spacecp&ac=credit'.format(self.forumurl), timeout=10, proxies=proxies, my_retry=3, my_fmt='str')
+            if ok:
+                self.user_info = data
+                self.discuz_get_user_id()
+                return True
         except Exception:
-            warn('failed to get user info')
-            self.user_info = ''
+            pass
+
+        warn('failed to get user info')
+        self.user_info = ''
+        return False
 
     def discuz_get_user_id(self):
         if self.user_id > 0:
@@ -332,9 +343,8 @@ class Checkin(object):
                 action = curl_actions[i]
                 try:
                     context = uncurl.parse_context(action)
-                    req = requests.Request(context.method, context.url, data=context.data, headers=context.headers)
-                    prepped = self.sess.prepare_request(req)
-                    resp = self.sess.send(prepped)
+                    self.net.sess.cookies.update(context.cookies)
+                    resp, data, _ = self.net.getData(context.url, method=context.method, data=context.data, headers=context.headers, my_retry=3, my_fmt='str')
                     info('curl action ({}) was finished, status code: {}.'.format(i + 1, resp.status_code))
                 except Exception as e:
                     warn('curl action ({}) was not finished as expected.'.format(i + 1), exc_info=True)
@@ -365,7 +375,7 @@ class Checkin(object):
 
     def _addCookieToSession(self):
         cookie_dict = dict([v.split('=', 1) for v in self.cookie.strip().split(';')])
-        self.sess.cookies = requests.utils.cookiejar_from_dict(cookie_dict)
+        self.net.sess.cookies.update(requests.utils.cookiejar_from_dict(cookie_dict))
 
 def start(interval=None, strage='local'):
     strages = ['local', 'travis', 'tencent']
