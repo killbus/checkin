@@ -145,9 +145,10 @@ class Checkin(object):
         if not self.discuz_login():
             return False
 
-        self.discuz_promotion_with_proxy()
-        time.sleep(randint(1, 5))
+
         self.do_curl_actions()
+        time.sleep(randint(1, 5))
+        self.discuz_promotion_with_proxy()
 
     def discuz_visit_user_space(self):
         _current = self.discuz_user_info_pasered()
