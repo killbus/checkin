@@ -7,6 +7,7 @@ import configparser
 import math
 import os
 import re
+import json
 import sys
 import textwrap
 import time
@@ -89,6 +90,7 @@ for key, value in envs.items():
         promotion_credit_field_index = int(os.getenv('discuz_promotion_credit_field_index_' + env_id, 6))
         curl_actions = os.getenv('discuz_curl_actions_' + env_id)
         forumurl = os.getenv('discuz_forumurl_' + env_id)
+        charset = os.getenv('discuz_charset_' + env_id)
 
         proxies = {}
         http_proxy = os.getenv('discuz_http_' + env_id)
@@ -112,7 +114,8 @@ for key, value in envs.items():
                 'cookie': cookie,
                 'promotion_credit_field_index': promotion_credit_field_index,
                 'curl_actions': curl_actions,
-                'forumurl': forumurl
+                'forumurl': forumurl,
+                'charset': charset
             }
             if proxies:
                 _account['proxies'] = proxies
@@ -130,7 +133,13 @@ class Checkin(object):
         self.promotion_credit_field_index = account.get('promotion_credit_field_index')
         self.curl_actions = account.get('curl_actions')
         self.forumurl = account.get('forumurl')
+        self.forumCharset = 'gbk' if account.get('charset') == 'gbk' else 'utf-8'
         self.proxies = account.get('proxies')
+
+        self.formhash = ''
+        self.isLogon = False
+        self.isSign = False
+        self.xq = ''
 
         self.user_info = ''
         self.user_id = 0
@@ -146,9 +155,14 @@ class Checkin(object):
             return False
 
 
-        self.do_curl_actions()
-        time.sleep(randint(1, 5))
-        self.discuz_promotion_with_proxy()
+        actions = [
+            self.do_curl_actions,
+            self.discuz_dsu_paulsign_sign,
+            self.discuz_promotion_with_proxy
+        ]
+        for action in actions:
+            time.sleep(randint(1, 5))
+            action()
 
     def discuz_visit_user_space(self):
         _current = self.discuz_user_info_pasered()
@@ -236,6 +250,8 @@ class Checkin(object):
         
         if user_info:
             self.discuz_print_user_info(user_info)
+            self.isLogon = True
+
         else:
             warn("登陆出错")
             return False
@@ -335,6 +351,47 @@ class Checkin(object):
                 warn('promotion action failed', exc_info=True)
 
             time.sleep(randint(1, 5))
+
+    def discuz_init_formhash_dsu_paulsign(self):
+        ''' 获取formhash和心情 '''
+        _, data, ok = self.net.getData('{}/plugin.php?id=dsu_paulsign:sign'.format(self.forumurl), timeout=10, proxies=proxies, my_retry=3, my_fmt='str')
+        if ok:
+            rows = re.findall(r'<input type=\"hidden\" name=\"formhash\" value=\"(.*?)\" />', data)
+            if len(rows)!=0:
+                self.formhash = rows[0]
+                info(f'formhash is: {self.formhash}')
+            else:
+                info('none formhash!')
+
+            rows = re.findall(r'<input id=.* type=\"radio\" name=\"qdxq\" value=\"(.*?)\" style=\"display:none\">', data)
+            if len(rows)!=0:
+                self.xq = rows[0]
+                info(f'xq is: {self.xq}')
+            elif '已经签到' in data:
+                self.isSign = True
+                info('signed before!')
+            else:
+                info('none xq!')
+
+    def discuz_dsu_paulsign_sign(self, msg = '大家好，我爱你！'):
+        self.discuz_init_formhash_dsu_paulsign()
+
+        ''' 签到 '''
+        if self.isSign:
+            return
+
+        if self.isLogon and self.xq:
+            payload = {'fastreply': '1', 'formhash': self.formhash, 'qdmode': '1', 'qdxq': self.xq, 'todaysay':msg}
+            _, data, ok = self.net.getData(f'{self.forumurl}/plugin.php?id=dsu_paulsign:sign&operation=qiandao&infloat=1&inajax=1', method='POST', data=payload, timeout=10, proxies=proxies, my_retry=3, my_fmt='str')
+            if ok:
+                #print data
+                print(data)
+                if '签到成功' in data:
+                    self.isSign = True
+                    info('sign success!')
+                    return
+        warn('sign faild!')
+
 
     def do_curl_actions(self):
         if self.curl_actions:
