@@ -29,7 +29,19 @@ jobs:
         discuz_cookie_1: ${{ secrets.discuz_cookie_1 }}
         discuz_promotion_credit_field_index_1: ${{ secrets.discuz_promotion_credit_field_index_1 }}
         discuz_curl_actions_1: ${{ secrets.discuz_curl_actions_1 }}
-        discuz_forumurl_1: ${{ secrets.discuz_forumurl_1 }} 
+        discuz_forumurl_1: ${{ secrets.discuz_forumurl_1 }}
+        discuz_username_2: ${{ secrets.discuz_username_2 }}
+        discuz_password_2: ${{ secrets.discuz_password_2 }}
+        discuz_cookie_2: ${{ secrets.discuz_cookie_2 }}
+        discuz_promotion_credit_field_index_2: ${{ secrets.discuz_promotion_credit_field_index_2 }}
+        discuz_curl_actions_2: ${{ secrets.discuz_curl_actions_2 }}
+        discuz_forumurl_2: ${{ secrets.discuz_forumurl_2 }}
+        discuz_username_3: ${{ secrets.discuz_username_3 }}
+        discuz_password_3: ${{ secrets.discuz_password_3 }}
+        discuz_cookie_3: ${{ secrets.discuz_cookie_3 }}
+        discuz_promotion_credit_field_index_3: ${{ secrets.discuz_promotion_credit_field_index_3 }}
+        discuz_curl_actions_3: ${{ secrets.discuz_curl_actions_3 }}
+        discuz_forumurl_3: ${{ secrets.discuz_forumurl_3 }}
         PROXY_POOL_HOST: ${{ secrets.PROXY_POOL_HOST }}
         PROXY_POOL_CHECK_URL: ${{ secrets.PROXY_POOL_CHECK_URL }} 
       run: |
