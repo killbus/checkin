@@ -1,40 +1,45 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import random
-import requests
 import time
 import os
+import asyncio
 import sys
 
 if __name__ == '__main__':
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
 
+from applib.net_async_lib import NetManager
 from applib.log_lib import app_log
 info, debug, warn, error = app_log.info, app_log.debug, app_log.warn, app_log.error
 
 class Proxy(object):
 
-    def __init__(self):
+    def __init__(self, parent_event_exit=None):
+        self.event_exit = parent_event_exit
+        self.net = NetManager()
         self.proxy_pool_host = os.getenv('PROXY_POOL_HOST', 'localhost')
         self.proxy_pool_check_url = os.getenv('PROXY_POOL_CHECK_URL', 'https://baidu.com')
 
-    def checker(self, proxy):
+    async def checker(self, proxy):
         info('Validating name proxy: %s', proxy)
         header = self.get_ua()
         retry_count = 2
         while retry_count > 0:
+            await asyncio.sleep(0.2)
             try:
-                http_proxy = "http://{}".format(proxy)
+                http_proxy = f'http://{proxy}'
                 #r = requests.get('https://item.m.jd.com/coupon/coupon.json?wareId=5089253', headers = header, proxies={"http": http_proxy, "https": http_proxy}, timeout=5) # Iphone X
-                r = requests.get(self.proxy_pool_check_url, headers = header, proxies={"http": http_proxy, "https": http_proxy}, timeout=5) # Iphone X
+                _, _, ok = await self.net.getData(self.proxy_pool_check_url, headers = header, proxy=http_proxy, timeout=5)
                 # 使用代理访问
                 #if 'coupon' not in r.json():
-                if r.status_code != requests.codes.ok:
+                if not ok:
                     return False
                     
                 return True
             except Exception:
+                warn('Validation was no passed', exc_info=True)
                 retry_count -= 1
 
         # 出错5次, 删除代理池中代理
@@ -42,26 +47,36 @@ class Proxy(object):
         #self.delete_proxy(proxy)
         return False
 
-    def get_proxy(self, retry=3):
+    async def get_proxy(self, retry=3):
         while retry > 0:
+            if self.event_exit.is_set():
+                info('got exit flag, exit~')
+                break
+
             try:
-                res = requests.get(self.proxy_pool_host + "/get/")
-                data = res.json()
-                proxy = data['proxy']
-                if not self.checker(proxy):
-                    warn('Validate proxy failure, retrying')
-                    continue
-                info('Validate SUCCESS，using proxy: %s', proxy)
-                return proxy
+                _, data, ok = await self.net.getData(f'{self.proxy_pool_host}/get/', my_fmt='json')
+                if ok:
+                    proxy = data['proxy']
+                    if not await self.checker(proxy):
+                        warn('Validate proxy failure, retrying')
+                        continue
+                    info('Validate SUCCESS，using proxy: %s', proxy)
+                    await self.net.clean()
+                    return proxy
+                else:
+                    retry -= 1
+                    warn('An error occured during geting proxies from remote server, retrying')
+
             except Exception:
                 retry -= 1
-                warn('No proxy now from remote server, retrying')
-                time.sleep(5)
+                warn('No proxy now from remote server, retrying', exc_info=True)
+                await asyncio.sleep(0.2)
 
+        await self.net.clean()
         return None
 
-    def delete_proxy(self, proxy):
-        requests.get(self.proxy_pool_host + "/?proxy={}".format(proxy))
+    async def delete_proxy(self, proxy):
+        await self.net.getData(f'{self.proxy_pool_host}/?proxy={proxy}')
 
     @staticmethod
     def get_ua():
@@ -101,6 +116,5 @@ class Proxy(object):
         return ua
         
 if __name__ == '__main__':
-    basicConfig(level=logging.DEBUG)
-    p = Proxy()
-    print(p.get_proxy())
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(Proxy().get_proxy())

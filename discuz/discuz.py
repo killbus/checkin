@@ -13,6 +13,11 @@ import textwrap
 import time
 from random import random, randint
 from urllib.parse import quote, urlparse
+import asyncio
+import subprocess
+import concurrent
+import signal
+import contextlib
 #from http.cookies import SimpleCookie
 import uncurl
 
@@ -21,11 +26,9 @@ if __name__ == '__main__':
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
 
 from applib.proxy_pool_lib import Proxy
-from applib.net_lib import NetManager
+from applib.net_async_lib import NetManager
 from applib.log_lib import app_log
 info, debug, warn, error = app_log.info, app_log.debug, app_log.warn, app_log.error
-
-import requests
 
 
 discuz_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -35,16 +38,37 @@ parser = argparse.ArgumentParser(description='Discuz auto checkin')
 parser.add_argument('-c', '--config', )
 args = parser.parse_args()
 
-def get_ip(url=None, proxies=None):
+event_exit = asyncio.Event()
+
+async def get_ip(url=None, proxy=None):
+    myip = ''
     if url is None:
-        try:
-            #url = 'https://10000.gd.cn/getClientIP.php?id={}'.format(random())
-            url = 'https://api.ipify.org'
-            myip = requests.get(url, proxies=proxies).text
-            return myip
-        except Exception:
+        url = 'https://api.ipify.org'
+
+    net = NetManager()
+    try:
+        #url = 'https://10000.gd.cn/getClientIP.php?id={}'.format(random())
+        url = 'https://api.ipify.org'
+        _, data, ok = await net.getData(url, method='GET', proxy=proxy, my_fmt='str')
+        if ok:
+            myip = data
+        else:
             warn('failed to get my ip.')
-            return ''
+            myip = ''
+    except Exception:
+        warn('failed to get my ip.', exc_info=True)
+        myip = ''
+
+    finally:
+        await net.clean()
+        return myip
+
+
+async def signal_handler(sig):
+    if sig == signal.SIGINT:
+        warn('got Ctrl+C')
+        if not event_exit.is_set():
+            event_exit.set()
 
 accounts = {}
 config_file = args.config
@@ -90,7 +114,6 @@ for key, value in envs.items():
         promotion_credit_field_index = int(os.getenv('discuz_promotion_credit_field_index_' + env_id, 6))
         curl_actions = os.getenv('discuz_curl_actions_' + env_id)
         forumurl = os.getenv('discuz_forumurl_' + env_id)
-        charset = os.getenv('discuz_charset_' + env_id)
 
         proxies = {}
         http_proxy = os.getenv('discuz_http_' + env_id)
@@ -114,8 +137,7 @@ for key, value in envs.items():
                 'cookie': cookie,
                 'promotion_credit_field_index': promotion_credit_field_index,
                 'curl_actions': curl_actions,
-                'forumurl': forumurl,
-                'charset': charset
+                'forumurl': forumurl
             }
             if proxies:
                 _account['proxies'] = proxies
@@ -133,8 +155,13 @@ class Checkin(object):
         self.promotion_credit_field_index = account.get('promotion_credit_field_index')
         self.curl_actions = account.get('curl_actions')
         self.forumurl = account.get('forumurl')
-        self.forumCharset = 'gbk' if account.get('charset') == 'gbk' else 'utf-8'
+        self.forumCharset = ''
         self.proxies = account.get('proxies')
+        if self.proxies:
+            self.proxy = random.choice(self.proxies)
+
+        else:
+            self.proxy = None
 
         self.formhash = ''
         self.isLogon = False
@@ -149,49 +176,69 @@ class Checkin(object):
 
         info('processing works for user {} of {}'.format(self.username, self.forumurl))
 
-    def checkin_works(self):
+    async def checkin_works(self):
+        try:
+            await self.get_forum_charset()
+            if not await self.discuz_login():
+                return False
 
-        if not self.discuz_login():
-            return False
+            actions = [
+                self.do_curl_actions,
+                self.discuz_dsu_paulsign_sign,
+                self.discuz_promotion_with_proxy
+            ]
+            for action in actions:
+                await asyncio.sleep(randint(1, 5))
+                await action()
+        finally:
+            await self.net.clean()
 
+    async def get_forum_charset(self):
+        charset = None
+        _, data, ok = await self.net.getData(f'{self.forumurl}', timeout=10, proxy=self.proxy, my_retry=3, my_fmt='str')
+        if ok:
+            charset = re.search(r'<meta\ *http-equiv=[\"\']Content-Type[\"\']\ *content=[\"\']text/html;\ *charset=([^\ ]+)[\"\']\ */?>', data)
+            if charset is not None:
+                charset = charset.group(1)
 
-        actions = [
-            self.do_curl_actions,
-            self.discuz_dsu_paulsign_sign,
-            self.discuz_promotion_with_proxy
-        ]
-        for action in actions:
-            time.sleep(randint(1, 5))
-            action()
+        if charset is None:
+            charset = 'utf-8'
 
-    def discuz_visit_user_space(self):
-        _current = self.discuz_user_info_pasered()
+        self.forumCharset = charset
+
+    async def discuz_visit_user_space(self):
+        _current = await self.discuz_user_info_pasered()
         _visit = 0
         visited_space_uids = []
         random_visits = 10 + randint(5, 10)
         while True:
+            if event_exit.is_set():
+                info('got exit flag, exit~')
+                break
+            await asyncio.sleep(0.2)
+
             if _visit == random_visits:
                 break
             space_uid = randint(1, 35550)
             if space_uid in visited_space_uids:
                 continue
 
-            _, data, ok = self.net.getData('{forumurl}/?{uid}'.format(forumurl = self.forumurl, uid = space_uid), timeout=10, proxies=proxies, my_retry=3, my_fmt='str')
+            _, data, ok = await self.net.getData(f'{self.forumurl}/?{space_uid}', timeout=10, proxy=self.proxy, my_retry=3, my_fmt='str', my_str_encoding=self.forumCharset)
             if ok:
                 space_text = data
                 visited_space_uids.append(space_uid)
-                time.sleep(randint(1, 5))
+                await asyncio.sleep(randint(1, 5))
                 if '抱歉，您指定的用户空间不存在' in space_text:
                     debug('访问UID: %s，不存在', space_uid)
                     continue
                 debug('访问UID: %s, 成功', space_uid)
                 _visit += 1
 
-        _new = self.discuz_user_info_pasered()
+        _new = await self.discuz_user_info_pasered()
         self.discuz_print_user_info(_current, '(之前)')
         self.discuz_print_user_info(_new, '(现在)')
 
-    def discuz_login(self):
+    async def discuz_login(self):
         
         cookies = {}
         global L7DFW
@@ -213,19 +260,20 @@ class Checkin(object):
             'referer': '{}/member.php'.format(self.forumurl),
             'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7,zh-TW;q=0.6'
         }
-        self.net.sess.headers.update(headers)
+        # self.net.sess.headers.update(headers)
+
         if self.strage == 'tencent':
             pass
         else:
-            info('使用IP: {}'.format(get_ip(proxies=proxies)))
+            info('使用IP: {}'.format(await get_ip(proxy=self.proxy)))
 
         if not self.cookie:
-            login_url = '{}/member.php?mod=logging&action=login&loginsubmit=yes&infloat=yes&lssubmit=yes&inajax=1'.format(self.forumurl)
+            login_url = f'{self.forumurl}/member.php?mod=logging&action=login&loginsubmit=yes&infloat=yes&lssubmit=yes&inajax=1'
 
-            payload = "fastloginfield=email&username={}&password={}&quickforward=yes&handlekey=ls".format(quote(self.username), self.password)
-            _, data, ok = self.net.getData(login_url, method='POST', data=payload, cookies=cookies, timeout=10, proxies=proxies, my_retry=3, my_fmt='str')
+            payload = f'fastloginfield=email&username={quote(self.username)}&password={self.password}&quickforward=yes&handlekey=ls'
+            _, data, ok = await self.net.getData(login_url, method='POST', headers=headers, data=payload, cookies=cookies, timeout=10, proxy=self.proxy, my_retry=3, my_fmt='str', my_str_encoding=self.forumCharset)
             if ok:
-                _aes = re.findall("toNumbers\(\"(.*?)\"\)?", data, flags=re.S)
+                _aes = re.findall(r"toNumbers\(\"(.*?)\"\)?", data, flags=re.S)
                 if _aes:
                     info("发现防ddos")
                     # aes_url = 'https://donjs.herokuapp.com/aes/{a}/{b}/{c}'.format(a=_aes[0], b=_aes[1], c=_aes[2])
@@ -238,15 +286,15 @@ class Checkin(object):
                     )
                     debug('L7DFW: %s', L7DFW)
                     cookies['L7DFW'] = L7DFW
-                    time.sleep(1)
-                    self.net.getData(login_url, method='POST', json={'username': self.username, 'password': self.password}, cookies=cookies, timeout=10, proxies=proxies, my_retry=3, my_fmt='str')
+                    await asyncio.sleep(1)
+                    await self.net.getData(login_url, method='POST', json={'username': self.username, 'password': self.password}, cookies=cookies, timeout=10, proxy=self.proxy, my_retry=3, my_fmt='str', my_str_encoding=self.forumCharset)
 
                 #time.sleep(randint(1, 5))
 
         else:
             self._addCookieToSession()
         
-        user_info = self.discuz_user_info_pasered()
+        user_info = await self.discuz_user_info_pasered()
         
         if user_info:
             self.discuz_print_user_info(user_info)
@@ -270,9 +318,9 @@ class Checkin(object):
             credit = user_info_parsed.group(6),
         ))
 
-    def discuz_get_user_info(self):
+    async def discuz_get_user_info(self):
         try:
-            _, data, ok = self.net.getData('{}/home.php?mod=spacecp&ac=credit'.format(self.forumurl), timeout=10, proxies=proxies, my_retry=3, my_fmt='str')
+            _, data, ok = await self.net.getData('{}/home.php?mod=spacecp&ac=credit'.format(self.forumurl), timeout=10, proxy=self.proxy, my_retry=3, my_fmt='str', my_str_encoding=self.forumCharset)
             if ok:
                 self.user_info = data
                 self.discuz_get_user_id()
@@ -299,18 +347,27 @@ class Checkin(object):
         warn('failed to get user id.')
         return False
 
-    def discuz_user_info_pasered(self):
-        self.discuz_get_user_info()
+    async def discuz_user_info_pasered(self):
+        await self.discuz_get_user_info()
         info_pattern = re.compile(r'>用户组: (.+?)</a>.*<em> (.+?): </em>(\d+)  &nbsp; .*</li>.*<li><em> (.+?): </em>(\d+) </li>.*<li class=\"cl\"><em>积分: </em>(\d+) <span', flags=re.S)
         return re.search(info_pattern, self.user_info)
 
-    def discuz_promotion_with_proxy(self, times=55):
+    async def discuz_promotion_with_proxy(self, times=55):
         credit_not_changed = 0
         proxies_used = []
         while times > 0:
-            _current = self.discuz_user_info_pasered()
+            if event_exit.is_set():
+                info('got exit flag, exit~')
+                break
+
+            _current = await self.discuz_user_info_pasered()
             while True:
-                proxy = Proxy().get_proxy()
+                await asyncio.sleep(0.2)
+                if event_exit.is_set():
+                    info('got exit flag, exit~')
+                    break
+
+                proxy = await Proxy(parent_event_exit=event_exit).get_proxy()
                 #proxy = '218.60.8.99:3129'
                 if not proxy:
                     warn('not any valid proxies found!')
@@ -324,37 +381,36 @@ class Checkin(object):
 
             proxies_used.append(proxy)
 
-            proxies = {
-                'http': 'http://{}'.format(proxy)
-            }
-            proxies['https'] = proxies['http']
+            proxy = f'http://{proxy}'
+
             promotion_url = '{}/?fromuid={}'.format(self.forumurl, self.user_id)
             try:
-                res = requests.get(promotion_url, proxies=proxies, headers={'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36'}, timeout=10)
-                _new = self.discuz_user_info_pasered()
-                self.discuz_print_user_info(_current, '(之前)')
-                self.discuz_print_user_info(_new, '(现在)')
-                info('promotion action success.')
-                if _current.group(self.promotion_credit_field_index) != _new.group(self.promotion_credit_field_index):
-                    credit_not_changed = 0
-                    times -= 1
+                _, _, ok = await self.net.getData(promotion_url, proxy=proxy, headers={'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36'}, timeout=10, my_str_encoding=self.forumCharset)
+                if ok:
+                    _new = await self.discuz_user_info_pasered()
+                    self.discuz_print_user_info(_current, '(之前)')
+                    self.discuz_print_user_info(_new, '(现在)')
+                    info('promotion action success.')
+                    if _current.group(self.promotion_credit_field_index) != _new.group(self.promotion_credit_field_index):
+                        credit_not_changed = 0
+                        times -= 1
 
+                    else:
+                        credit_not_changed += 1
+                        if credit_not_changed > 3:
+                            warn('credit not changed by doing promotion, now stop.')
+                            break
                 else:
-                    credit_not_changed += 1
-                    if credit_not_changed > 3:
-                        warn('credit not changed by doing promotion, now stop.')
-                        break
-            except requests.exceptions.RequestException:
-                warn('promotion action failed with requests error.')
+                    warn('promotion action failed with requests error.')
 
             except Exception:
                 warn('promotion action failed', exc_info=True)
 
-            time.sleep(randint(1, 5))
+            await asyncio.sleep(randint(1, 5))
 
-    def discuz_init_formhash_dsu_paulsign(self):
+    async def discuz_init_formhash_dsu_paulsign(self):
         ''' 获取formhash和心情 '''
-        _, data, ok = self.net.getData('{}/plugin.php?id=dsu_paulsign:sign'.format(self.forumurl), timeout=10, proxies=proxies, my_retry=3, my_fmt='str')
+        _, data, ok = await self.net.getData('{}/plugin.php?id=dsu_paulsign:sign'.format(self.forumurl), timeout=10, proxy=self.proxy, my_retry=3, my_fmt='str', my_str_encoding=self.forumCharset)
         if ok:
             rows = re.findall(r'<input type=\"hidden\" name=\"formhash\" value=\"(.*?)\" />', data)
             if len(rows)!=0:
@@ -373,8 +429,8 @@ class Checkin(object):
             else:
                 info('none xq!')
 
-    def discuz_dsu_paulsign_sign(self, msg = '大家好，我爱你！'):
-        self.discuz_init_formhash_dsu_paulsign()
+    async def discuz_dsu_paulsign_sign(self, msg = '大家好，我爱你！'):
+        await self.discuz_init_formhash_dsu_paulsign()
 
         ''' 签到 '''
         if self.isSign:
@@ -382,7 +438,7 @@ class Checkin(object):
 
         if self.isLogon and self.xq:
             payload = {'fastreply': '1', 'formhash': self.formhash, 'qdmode': '1', 'qdxq': self.xq, 'todaysay':msg}
-            _, data, ok = self.net.getData(f'{self.forumurl}/plugin.php?id=dsu_paulsign:sign&operation=qiandao&infloat=1&inajax=1', method='POST', data=payload, timeout=10, proxies=proxies, my_retry=3, my_fmt='str')
+            _, data, ok = await self.net.getData(f'{self.forumurl}/plugin.php?id=dsu_paulsign:sign&operation=qiandao&infloat=1&inajax=1', method='POST', data=payload, timeout=10, proxy=self.proxy, my_retry=3, my_fmt='str', my_str_encoding=self.forumCharset)
             if ok:
                 #print data
                 print(data)
@@ -393,7 +449,7 @@ class Checkin(object):
         warn('sign faild!')
 
 
-    def do_curl_actions(self):
+    async def do_curl_actions(self):
         if self.curl_actions:
             curl_actions = self.curl_actions.split('\n')
             curl_actions = list(filter(None, curl_actions))
@@ -401,11 +457,12 @@ class Checkin(object):
                 action = curl_actions[i]
                 try:
                     context = uncurl.parse_context(action)
-                    self.net.sess.cookies.update(context.cookies)
-                    resp, data, _ = self.net.getData(context.url, method=context.method, data=context.data, headers=context.headers, my_retry=3, my_fmt='str')
-                    info('curl action ({}) was finished, status code: {}.'.format(i + 1, resp.status_code))
-                except Exception as e:
-                    warn('curl action ({}) was not finished as expected.'.format(i + 1), exc_info=True)
+                    # self.net.sess.cookies.update(context.cookies)
+                    self.net.sess.cookie_jar.update_cookies(context.cookies)
+                    resp, _, _ = await self.net.getData(context.url, method=context.method, data=context.data, headers=context.headers, my_retry=3, my_fmt='str', my_str_encoding=self.forumCharset)
+                    info(f'curl action ({i + 1}) was finished, status code: {resp.status}.')
+                except Exception:
+                    warn(f'curl action ({i + 1}) was not finished as expected.', exc_info=True)
 
             info('curl actions were finished.')
             return True
@@ -413,10 +470,15 @@ class Checkin(object):
         info('no curl actions found, ignore.')
         return False
 
-    def checkin_workds_retry(self):
+    async def checkin_workds_retry(self):
         while True:
+            await asyncio.sleep(0.2)
+            if event_exit.is_set():
+                info('got exit flag, exit~')
+                break
+
             try:
-                self.checkin_works()
+                await self.checkin_works()
                 break
             except Exception:
                 warn('', exc_info=True)
@@ -426,16 +488,19 @@ class Checkin(object):
                 self.retry -= 1
                 if self.strage == 'tencent':
                     debug('等待10秒重试')
-                    time.sleep(10)
+                    await asyncio.sleep(10)
                 else:
                     debug('等待20秒重试')
-                    time.sleep(20)
+                    await asyncio.sleep(20)
 
     def _addCookieToSession(self):
         cookie_dict = dict([v.split('=', 1) for v in self.cookie.strip().split(';')])
-        self.net.sess.cookies.update(requests.utils.cookiejar_from_dict(cookie_dict))
+        # self.net.sess.cookies.update(requests.utils.cookiejar_from_dict(cookie_dict))
+        self.net.sess.cookie_jar.update_cookies(cookie_dict)
 
-def start(interval=None, strage='local'):
+
+
+async def start(interval=None, log_to_file=False, strage='local'):
     strages = ['local', 'travis', 'tencent']
     if strage not in strages:
         strage = 'local'
@@ -443,16 +508,24 @@ def start(interval=None, strage='local'):
     if strage == 'tencent':
         pass
     else:
-        debug('本机IP: %s', get_ip())
-    _first = True
+        # debug('本机IP: %s', await get_ip())
+        pass
+    # _first = True
     _wait_time = interval or 3 * 60
+    fut = []
     for account in accounts.values():
         checkin = Checkin(account, retry=3, strage=strage)
-        if not _first:
-            debug('等待%s分钟处理下一个任务', _wait_time // 60)
-            time.sleep(int(_wait_time))
-        _first = False
-        checkin.checkin_workds_retry()
+        # if not _first:
+        #     debug('等待%s分钟处理下一个任务', _wait_time // 60)
+        #     time.sleep(int(_wait_time))
+        # _first = False
+        fut.append(checkin.checkin_workds_retry())
+
+    try:
+        await asyncio.gather(*fut, return_exceptions=True)
+    except concurrent.futures._base.CancelledError:
+        info('Cancel after KeyboardInterrupt ? exit!')
+
     info('========= 今日任务完成 ==========')
 
 
@@ -1103,4 +1176,18 @@ def main_handler(event, context):
 
 
 if __name__ == '__main__':
-    start()
+    loop = asyncio.get_event_loop()
+    loop.add_signal_handler(signal.SIGINT, lambda: loop.create_task(signal_handler(signal.SIGINT)))
+
+    try:
+        task = loop.create_task(start())
+
+        loop.run_until_complete(task)
+    except KeyboardInterrupt:
+        info('cancel on KeyboardInterrupt..')
+        all_tasks = asyncio.gather(*asyncio.Task.all_tasks(loop), return_exceptions=True)
+        all_tasks.cancel()
+        #task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            loop.run_until_complete(all_tasks)
+            loop.run_until_complete(loop.shutdown_asyncgens())
