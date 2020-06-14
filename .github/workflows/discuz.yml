@@ -3,7 +3,7 @@ name: Discuz
 on: 
   push:
     branches:
-    - master
+    - async
   schedule:
   - cron: 10 1 * * *
 
