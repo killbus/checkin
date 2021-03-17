@@ -1,49 +1,48 @@
 name: Discuz
 
-on: 
+on:
   push:
     branches:
-    - master
+      - master
   workflow_dispatch:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
-      with:
-        ref: async
-    - name: Set up Python3.7
-      uses: actions/setup-python@v1
-      with:
-        python-version: '3.7'
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    - name: Run hostloc checkin
-      env:
-        discuz_username_1: ${{ secrets.discuz_username_1 }}
-        discuz_password_1: ${{ secrets.discuz_password_1 }}
-        discuz_cookie_1: ${{ secrets.discuz_cookie_1 }}
-        discuz_promotion_credit_field_index_1: ${{ secrets.discuz_promotion_credit_field_index_1 }}
-        discuz_curl_actions_1: ${{ secrets.discuz_curl_actions_1 }}
-        discuz_forumurl_1: ${{ secrets.discuz_forumurl_1 }}
-        discuz_username_2: ${{ secrets.discuz_username_2 }}
-        discuz_password_2: ${{ secrets.discuz_password_2 }}
-        discuz_cookie_2: ${{ secrets.discuz_cookie_2 }}
-        discuz_promotion_credit_field_index_2: ${{ secrets.discuz_promotion_credit_field_index_2 }}
-        discuz_curl_actions_2: ${{ secrets.discuz_curl_actions_2 }}
-        discuz_forumurl_2: ${{ secrets.discuz_forumurl_2 }}
-        discuz_username_3: ${{ secrets.discuz_username_3 }}
-        discuz_password_3: ${{ secrets.discuz_password_3 }}
-        discuz_cookie_3: ${{ secrets.discuz_cookie_3 }}
-        discuz_promotion_credit_field_index_3: ${{ secrets.discuz_promotion_credit_field_index_3 }}
-        discuz_curl_actions_3: ${{ secrets.discuz_curl_actions_3 }}
-        discuz_forumurl_3: ${{ secrets.discuz_forumurl_3 }}
-        PROXY_POOL_HOST: ${{ secrets.PROXY_POOL_HOST }}
-        PROXY_POOL_CHECK_URL: ${{ secrets.PROXY_POOL_CHECK_URL }} 
-      run: |
-        python discuz/discuz.py
+      - uses: actions/checkout@v2
+        with:
+          ref: async
+      - name: Set up Python3.7
+        uses: actions/setup-python@v1
+        with:
+          python-version: "3.7"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run hostloc checkin
+        env:
+          discuz_username_1: ${{ secrets.discuz_username_1 }}
+          discuz_password_1: ${{ secrets.discuz_password_1 }}
+          discuz_cookie_1: ${{ secrets.discuz_cookie_1 }}
+          discuz_promotion_credit_field_index_1: ${{ secrets.discuz_promotion_credit_field_index_1 }}
+          discuz_curl_actions_1: ${{ secrets.discuz_curl_actions_1 }}
+          discuz_forumurl_1: ${{ secrets.discuz_forumurl_1 }}
+          discuz_username_2: ${{ secrets.discuz_username_2 }}
+          discuz_password_2: ${{ secrets.discuz_password_2 }}
+          discuz_cookie_2: ${{ secrets.discuz_cookie_2 }}
+          discuz_promotion_credit_field_index_2: ${{ secrets.discuz_promotion_credit_field_index_2 }}
+          discuz_curl_actions_2: ${{ secrets.discuz_curl_actions_2 }}
+          discuz_forumurl_2: ${{ secrets.discuz_forumurl_2 }}
+          discuz_username_3: ${{ secrets.discuz_username_3 }}
+          discuz_password_3: ${{ secrets.discuz_password_3 }}
+          discuz_cookie_3: ${{ secrets.discuz_cookie_3 }}
+          discuz_promotion_credit_field_index_3: ${{ secrets.discuz_promotion_credit_field_index_3 }}
+          discuz_curl_actions_3: ${{ secrets.discuz_curl_actions_3 }}
+          discuz_forumurl_3: ${{ secrets.discuz_forumurl_3 }}
+          PROXY_POOL_HOST: ${{ secrets.PROXY_POOL_HOST }}
+          PROXY_POOL_CHECK_URL: ${{ secrets.PROXY_POOL_CHECK_URL }}
+        run: |
+          python discuz/discuz.py
