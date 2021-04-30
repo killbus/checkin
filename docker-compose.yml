@@ -1,0 +1,38 @@
+version: "3.7"
+
+services: 
+  python:
+    build: 
+      context: ./
+    environment: 
+      - CRON="5 0 * * *"
+      - discuz_username_1=
+      - discuz_password_1=
+      - discuz_promotion_credit_field_index_1=3
+      - |
+        discuz_curl_actions_1=
+        curl 'http://example.com'
+        curl 'http://example2.com'
+
+      - discuz_forumurl_1=http://example.com
+      - discuz_username_2=
+      - discuz_password_2=
+      - discuz_promotion_credit_field_index_2=3
+      - |
+        discuz_curl_actions_2=
+        curl 'http://example.com'
+        curl 'http://example2.com'
+
+      - discuz_forumurl_2=
+      - discuz_username_3=
+      - discuz_password_3=
+      - discuz_promotion_credit_field_index_3=3
+      - |
+        discuz_curl_actions_3=
+        curl 'http://example.com'
+        curl 'http://example2.com'
+
+      - discuz_forumurl_3=
+      - PROXY_POOL_HOST=http://example.com
+      - PROXY_POOL_CHECK_URL=http://example.com
+    restart: unless_stopped
